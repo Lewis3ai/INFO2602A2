@@ -1,8 +1,8 @@
 {% extends "layout.html" %}
 
-{% block title %}{% endblock %}
+{% block title %}Home{% endblock %}
 
-{% block page %}{% endblock %}
+{% block page %}Home{% endblock %}
 
 {% block link%}
 <ul id="nav-mobile" class="right">
@@ -11,7 +11,6 @@
 {% endblock %}
 
 {% block styles%}
-
     td{
         padding: 2px;
     }
@@ -21,27 +20,35 @@
     }
 {% endblock %}
 
-
 {% block content %}
 <div class="row">
-    <div class="col m3 list-container collection" style="max-height: 88vh;">
-  
+    <div class="col m3 list-container collection" style="max-height: 88vh; overflow-y: auto;">
+        {% for id, image in pokemon_list %}
+            <a href="{{ url_for('home_page', pokemon_id=id) }}" class="collection-item {% if selected_pokemon and selected_pokemon.id == id %}active{% endif %}">
+                <img src="{{ image }}" alt="Pokemon {{ id }}" width="50"> Pokemon {{ id }}
+            </a>
+        {% endfor %}
     </div>
     
     <div class="col m3">
-
-            <p class="text-center">Selected Pokemon</p>
-
-            <div id="pokemon-detail">
-                 <!-- Show pokemon details here -->
-            </div>
-
+        <p class="text-center">Selected Pokemon</p>
+        <div id="pokemon-detail">
+            {% if selected_pokemon %}
+                <div class="card">
+                    <div class="card-image">
+                        <img src="{{ selected_pokemon.image }}" alt="Selected Pokemon">
+                    </div>
+                    <div class="card-content">
+                        <p>Pokemon ID: {{ selected_pokemon.id }}</p>
+                    </div>
+                </div>
+            {% endif %}
+        </div>
     </div>
 
-    <div class="col m6" >
+    <div class="col m6">
         <p class="text-center">Your Pokemon</p>
         <table class="responsive-table" id="pokemon-table">
-            <!-- Captured pokemon content here -->
             <thead>
                 <tr>
                     <th>Pokemon</th>
@@ -50,13 +57,21 @@
                 </tr>
             </thead>
             <tbody>
-              <!-- show captured pokemon here with controls to rename and release for each pokemon -->
+                {% for poke in user_pokemon %}
+                    <tr>
+                        <td><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{{ poke.pokemon_id }}.png" alt="{{ poke.name }}" width="50"></td>
+                        <td>{{ poke.name }}</td>
+                        <td>
+                            <form action="{{ url_for('rename_pokemon', user_poke_id=poke.id) }}" method="POST" style="display:inline;">
+                                <input type="text" name="new_name" placeholder="Rename">
+                                <button type="submit">Rename</button>
+                            </form>
+                            <a href="{{ url_for('release_pokemon', user_poke_id=poke.id) }}" class="btn red">Release</a>
+                        </td>
+                    </tr>
+                {% endfor %}
             </tbody>
         </table>
     </div>
-
 </div>
-
-
-
 {% endblock %}

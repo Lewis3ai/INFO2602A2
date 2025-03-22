@@ -1,17 +1,18 @@
 import os, csv
 import datetime
-from flask import Flask, request, redirect, render_template, url_for, flash
+from flask import Flask, request, redirect, render_template, url_for, flash, session
 from flask_cors import CORS
 from sqlalchemy.exc import IntegrityError
+from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import (
     JWTManager,
     create_access_token,
     jwt_required,
     set_access_cookies,
     unset_jwt_cookies,
-    current_user
+    get_jwt_identity
 )
-from .models import db, User, UserPokemon, Pokemon
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # Configure Flask App
 app = Flask(__name__)
@@ -27,127 +28,144 @@ app.config["JWT_SECRET_KEY"] = "super-secret"
 app.config["JWT_COOKIE_CSRF_PROTECT"] = False
 app.config['JWT_HEADER_NAME'] = "Cookie"
 
-
 # Initialize App 
-db.init_app(app)
+db = SQLAlchemy(app)
 app.app_context().push()
 CORS(app)
 jwt = JWTManager(app)
 
+# User Model
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password = db.Column(db.String(200), nullable=False)
+
+# User's Pokemon Model
+class UserPokemon(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    pokemon_id = db.Column(db.Integer, nullable=False)
+    name = db.Column(db.String(80), nullable=False)
+
 # JWT Config to enable current_user
 @jwt.user_identity_loader
 def user_identity_lookup(user):
-  return user.id
+    return user.id
 
 @jwt.user_lookup_loader
 def user_lookup_callback(_jwt_header, jwt_data):
-  identity = jwt_data["sub"]
-  return User.query.get(identity)
-
-# *************************************
-
-# Initializer Function to be used in both init command and /init route
-# Parse pokemon.csv and populate database and creates user "bob" with password "bobpass"
-def initialize_db():
-  db.drop_all()
-  db.create_all()
-  with open('pokemon.csv', newline='', encoding='utf8') as csvfile:
-    reader = csv.DictReader(csvfile)
-    for row in reader:
-      if row['height_m'] == '':
-        row['height_m'] = None
-      if row['weight_kg'] == '':
-        row['weight_kg'] = None
-      if row['type2'] == '':
-        row['type2'] = None
-
-      pokemon = Pokemon(name=row['name'], attack=row['attack'], defense=row['defense'], sp_attack=row['sp_attack'], sp_defense=row['sp_defense'], weight=row['weight_kg'], height=row['height_m'], hp=row['hp'], speed=row['speed'], type1=row['type1'], type2=row['type2'])
-      db.session.add(pokemon)
-    bob = User(username='bob', email="bob@mail.com", password="bobpass")
-    db.session.add(bob)
-    db.session.commit()
-    bob.catch_pokemon(1, "Benny")
-    bob.catch_pokemon(25, "Saul")
-
-# ********** Routes **************
-
-# Template implementation (don't change)
+    identity = jwt_data["sub"]
+    return User.query.get(identity)
 
 @app.route('/init')
 def init_route():
-  initialize_db()
-  return redirect(url_for('login_page'))
+    db.drop_all()
+    db.create_all()
+    flash('Database Initialized!', 'info')
+    return redirect(url_for('login_page'))
 
-@app.route("/", methods=['GET'])
+@app.route('/', methods=['GET'])
 def login_page():
-  return render_template("login.html")
+    return render_template("login.html")
 
-@app.route("/signup", methods=['GET'])
+@app.route('/signup', methods=['GET'])
 def signup_page():
     return render_template("signup.html")
 
-@app.route("/signup", methods=['POST'])
+@app.route('/signup', methods=['POST'])
 def signup_action():
-  response = None
-  try:
-    username = request.form['username']
-    email = request.form['email']
-    password = request.form['password']
-    user = User(username=username, email=email, password=password)
-    db.session.add(user)
-    db.session.commit()
-    response = redirect(url_for('home_page'))
-    token = create_access_token(identity=user)
-    set_access_cookies(response, token)
-  except IntegrityError:
-    flash('Username already exists')
-    response = redirect(url_for('signup_page'))
-  flash('Account created')
-  return response
+    try:
+        username = request.form['username']
+        email = request.form['email']
+        password = generate_password_hash(request.form['password'])
+        user = User(username=username, email=email, password=password)
+        db.session.add(user)
+        db.session.commit()
+        response = redirect(url_for('home_page'))
+        token = create_access_token(identity=user)
+        set_access_cookies(response, token)
+        flash('Account created successfully!', 'success')
+    except IntegrityError:
+        flash('Username already exists', 'danger')
+        response = redirect(url_for('signup_page'))
+    return response
 
-@app.route("/logout", methods=['GET'])
+@app.route('/logout', methods=['GET'])
 @jwt_required()
 def logout_action():
-  response = redirect(url_for('login_page'))
-  unset_jwt_cookies(response)
-  flash('Logged out')
-  return response
+    response = redirect(url_for('login_page'))
+    unset_jwt_cookies(response)
+    flash('Logged out', 'info')
+    return response
 
-# *************************************
-
-# Page Routes (To Update)
-
-@app.route("/app", methods=['GET'])
-@app.route("/app/<int:pokemon_id>", methods=['GET'])
+@app.route('/app', methods=['GET'])
+@app.route('/app/<int:pokemon_id>', methods=['GET'])
 @jwt_required()
 def home_page(pokemon_id=1):
-    # update pass relevant data to template
-    return render_template("home.html")
+    user_id = get_jwt_identity()
+    user_pokemon = UserPokemon.query.filter_by(user_id=user_id).all()
+    pokemon_list = [(i, f'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{i}.png') for i in range(1, 802)]
+    selected_pokemon = {'id': pokemon_id, 'image': f'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{pokemon_id}.png'}
+    return render_template("home.html", user_pokemon=user_pokemon, pokemon_list=pokemon_list, selected_pokemon=selected_pokemon)
 
-# Action Routes (To Update)
-
-@app.route("/login", methods=['POST'])
+@app.route('/login', methods=['POST'])
 def login_action():
-  # implement login
-  return "Login Action"
+    username = request.form['username']
+    password = request.form['password']
+    user = User.query.filter_by(username=username).first()
+    if user and check_password_hash(user.password, password):
+        access_token = create_access_token(identity=user.id)
+        session['jwt'] = access_token
+        return redirect(url_for('home_page'))
+    else:
+        flash('Invalid credentials, try again.', 'danger')
+        return redirect(url_for('login_page'))
 
-@app.route("/pokemon/<int:pokemon_id>", methods=['POST'])
+@app.route('/pokemon/<int:pokemon_id>', methods=['POST'])
 @jwt_required()
-def capture_action(pokemon_id):
-  # implement save newly captured pokemon, show a message then reload page
-  return redirect(request.referrer)
+def capture_pokemon(pokemon_id):
+    user_id = get_jwt_identity()
+    new_pokemon = UserPokemon(user_id=user_id, pokemon_id=pokemon_id, name=f'Pokemon {pokemon_id}')
+    db.session.add(new_pokemon)
+    db.session.commit()
+    flash('Pokemon captured!', 'success')
+    return redirect(url_for('home_page'))
 
-@app.route("/rename-pokemon/<int:pokemon_id>", methods=['POST'])
+@app.route('/rename-pokemon/<int:user_poke_id>', methods=['POST'])
 @jwt_required()
-def rename_action(pokemon_id):
-  # implement rename pokemon, show a message then reload page
-  return redirect(request.referrer)
+def rename_pokemon(user_poke_id):
+    new_name = request.form['new_name']
+    pokemon = UserPokemon.query.get(user_poke_id)
+    if pokemon:
+        pokemon.name = new_name
+        db.session.commit()
+        flash('Pokemon renamed successfully.', 'success')
+    return redirect(url_for('home_page'))
 
-@app.route("/release-pokemon/<int:pokemon_id>", methods=['GET'])
+@app.route('/release-pokemon/<int:user_poke_id>')
 @jwt_required()
-def release_action(pokemon_id):
-  # implement release pokemon, show a message then reload page
-  return redirect(request.referrer)
+def release_pokemon(user_poke_id):
+    pokemon = UserPokemon.query.get(user_poke_id)
+    if pokemon:
+        db.session.delete(pokemon)
+        db.session.commit()
+        flash('Pokemon released.', 'info')
+    return redirect(url_for('home_page'))
 
-if __name__ == "__main__":
-  app.run(host='0.0.0.0', port=8080)
+if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
+    app.run(debug=True, port=8080)
+
+
+
+
+
+
+
+
+
+
+
+
